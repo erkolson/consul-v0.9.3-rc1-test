@@ -7,7 +7,7 @@ metadata:
     k8s-app: "consul-test"
 spec:
   serviceName: "consul-test"
-  replicas: 3
+  replicas: 5
   template:
     metadata:
       name: "consul-test"
@@ -53,7 +53,7 @@ spec:
             fieldRef:
               fieldPath: status.podIP
         - name: CLUSTER_SIZE
-          value: "3"
+          value: "5"
         - name: STATEFULSET_NAME
           value: "consul-test"
         - name: POD_IP
@@ -102,7 +102,8 @@ spec:
               -advertise=$(POD_IP) \
               ${PEERS} \
               -config-file /etc/consul/config/server.json \
-              -client=0.0.0.0
+              -client=0.0.0.0 \
+              -bootstrap-expect=${CLUSTER_SIZE}
       volumes:
       - name: config
         configMap:
