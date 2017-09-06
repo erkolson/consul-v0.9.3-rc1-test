@@ -1,0 +1,120 @@
+apiVersion: apps/v1beta1
+kind: StatefulSet
+metadata:
+  name: "consul-test"
+  labels:
+    app: "consul-test"
+    k8s-app: "consul-test"
+spec:
+  serviceName: "consul-test"
+  replicas: 3
+  template:
+    metadata:
+      name: "consul-test"
+      labels:
+        app: "consul-test"
+        k8s-app: "consul-test"
+    spec:
+      securityContext:
+        fsGroup: 1000
+      containers:
+      - name: "consul"
+        image: "erikolson/consul:0.9.3-rc1"
+        imagePullPolicy: "Always"
+        ports:
+        - name: http
+          containerPort: 8500
+        - name: serflan-tcp
+          protocol: "TCP"
+          containerPort: 8301
+        - name: serflan-udp
+          protocol: "UDP"
+          containerPort: 8301
+        - name: serfwan-tcp
+          protocol: "TCP"
+          containerPort: 8302
+        - name: serfwan-udp
+          protocol: "UDP"
+          containerPort: 8302
+        - name: server
+          containerPort: 8300
+        - name: consuldns
+          containerPort: 8600
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "256Mi"
+          limits:
+            cpu: "500m"
+            memory: "512Mi"
+        env:
+        - name: POD_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: CLUSTER_SIZE
+          value: "3"
+        - name: STATEFULSET_NAME
+          value: "consul-test"
+        - name: POD_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: STATEFULSET_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        volumeMounts:
+        - name: datadir
+          mountPath: /var/lib/consul
+        - name: config
+          mountPath: /etc/consul/config
+          readOnly: true
+        livenessProbe:
+          exec:
+            command:
+            - consul
+            - members
+          initialDelaySeconds: 300
+          timeoutSeconds: 5
+        command:
+          - "/bin/sh"
+          - "-ec"
+          - |
+            for i in $(seq 0 $((${CLUSTER_SIZE} - 1))); do
+                while true; do
+                    echo "Waiting for ${STATEFULSET_NAME}-${i}.${STATEFULSET_NAME} to come up"
+                    ping -W 1 -c 1 ${STATEFULSET_NAME}-${i}.${STATEFULSET_NAME}.${STATEFULSET_NAMESPACE}.svc.cluster.local > /dev/null && break
+                    sleep 1s
+                done
+            done
+
+            PEERS=""
+            for i in $(seq 0 $((${CLUSTER_SIZE} - 1))); do
+                PEERS="${PEERS}${PEERS:+ } -retry-join $(ping -c 1 ${STATEFULSET_NAME}-${i}.${STATEFULSET_NAME}.${STATEFULSET_NAMESPACE}.svc.cluster.local | awk -F'[()]' '/PING/{print $2}')"
+            done
+
+            exec /bin/consul agent \
+              -ui \
+              -data-dir=/var/lib/consul \
+              -server \
+              -bind=0.0.0.0 \
+              -advertise=$(POD_IP) \
+              ${PEERS} \
+              -config-file /etc/consul/config/server.json \
+              -client=0.0.0.0
+      volumes:
+      - name: config
+        configMap:
+          name: consul-test-config
+  volumeClaimTemplates:
+  - metadata:
+      name: datadir
+      annotations:
+        volume.beta.kubernetes.io/storage-class: "gp2"
+    spec:
+      accessModes:
+        - "ReadWriteOnce"
+      resources:
+        requests:
+          storage: "1Gi"
